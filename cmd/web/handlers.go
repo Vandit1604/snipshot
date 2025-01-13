@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
+	"github.com/vandit1604/snipshot/pkg/forms"
 	"github.com/vandit1604/snipshot/pkg/models"
 )
 
@@ -34,10 +33,6 @@ func (app *app) showSnippet(w http.ResponseWriter, r *http.Request) {
 
 	snippet, err := app.snippets.Get(id)
 
-	templateData := templateData{
-		Snippet: snippet,
-	}
-
 	if err == models.ErrRecordNotFound {
 		app.notFound(w)
 		return
@@ -46,6 +41,9 @@ func (app *app) showSnippet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	templateData := templateData{
+		Snippet: snippet,
+	}
 	app.render(w, r, "show.page.tmpl", &templateData)
 }
 
@@ -56,51 +54,112 @@ func (app *app) createSnippet(w http.ResponseWriter, r *http.Request) {
 		app.clientError(w, http.StatusBadRequest)
 	}
 
-	title := r.PostForm.Get("title")
-	content := r.PostForm.Get("content")
-	expires := r.PostForm.Get("expires")
+	form := forms.New(r.PostForm)
+	form.Required("title", "expires", "content")
+	form.PermittedValues("expires", "365", "7", "1")
+	form.MaxLength("title", 100)
 
-	// return a map of errors if there are multiple validation errors
-	errors := make(map[string]string)
-
-	// validation
-	if strings.TrimSpace(title) == "" {
-		errors["title"] = "This field cannot be blank"
-	} else if utf8.RuneCountInString(title) > 100 {
-		errors["title"] = "This field is too long (maximum is 100 characters)"
-	}
-
-	// Check that the Content field isn't blank.
-	if strings.TrimSpace(content) == "" {
-		errors["content"] = "This field cannot be blank"
-	}
-
-	if strings.TrimSpace(expires) == "" {
-		errors["expires"] = "This field cannot be blank"
-	} else if expires != "365" && expires != "7" && expires != "1" {
-		errors["expires"] = "This field is invalid"
-	}
-
-	// If there are any errors, dump them in a plain text HTTP response and ret
-	// from the handler.
-	if len(errors) > 0 {
-		app.render(w, r, "create.page.tmpl", &templateData{
-			FormErrors: errors,
-			FormData:   r.PostForm,
-		})
+	if !form.Valid() {
+		app.render(w, r, "create.page.tmpl", &templateData{Form: form})
 		return
 	}
 
-	id, err := app.snippets.Insert(title, content, expires)
+	id, err := app.snippets.Insert(form.Get("title"), form.Get("content"), form.Get("expires"))
 	if err != nil {
 		app.serverError(w, err)
 		return
 	}
+
+	// cookie based session management
+	app.session.Put(r, "flash", "Snippet successfully created!")
 
 	// Redirect the user to the relevant page for the snippet.
 	http.Redirect(w, r, fmt.Sprintf("/snippet/%d", id), http.StatusSeeOther)
 }
 
 func (app *app) createSnippetForm(w http.ResponseWriter, r *http.Request) {
-	app.render(w, r, "create.page.tmpl", nil)
+	app.render(w, r, "create.page.tmpl", &templateData{
+		Form: forms.New(nil),
+	})
+}
+
+func (app *app) loginUser(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseForm()
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	form := forms.New(r.PostForm)
+	id, err := app.users.Authenticate(form.Get("email"), form.Get("password"))
+	if err == models.ErrInvalidCredenetials {
+		form.Errors.Add("generic", "Email or Password is incorrect")
+		app.render(w, r, "login.page.tmpl", &templateData{Form: form})
+		return
+	} else if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	// good idea to never specify what the id is
+	app.session.Put(r, "userID", id)
+	app.session.Put(r, "flash", "You have been logged in successfully")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (app *app) loginUserForm(w http.ResponseWriter, r *http.Request) {
+	app.render(w, r, "login.page.tmpl", &templateData{Form: forms.New(nil)})
+}
+
+func (app *app) signupUser(w http.ResponseWriter, r *http.Request) {
+	// 1. get form data
+	err := r.ParseForm()
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+	}
+	// 2. validate the form data and display form with errors if any
+	// Question: here we are getting the data from the post request but when are we making this post request to this handler?
+	form := forms.New(r.PostForm)
+	form.Required("name", "email", "password")
+	form.MatchesPattern("email", forms.EmailRX)
+	form.MinLength("password", 10)
+
+	if !form.Valid() {
+		app.render(w, r, "signup.page.tmpl", &templateData{
+			Form: form,
+		})
+		return
+	}
+
+	// 3. add user in db if it doesn't exist
+	err = app.users.Insert(form.Get("name"), form.Get("email"), form.Get("password"))
+	if err == models.ErrDuplicateEmail {
+		form.Errors.Add("email", "Address is already in use")
+		app.render(w, r, "signup.page.tmpl", &templateData{Form: form})
+		return
+	} else if err != nil {
+		app.serverError(w, err)
+		return
+	}
+	// Otherwise add a confirmation flash message to the session confirming tha
+	// their signup worked and asking them to log in.
+	app.session.Put(r, "flash", "Your signup was successful. Please log in.")
+	// And redirect the user to the login page.
+	http.Redirect(w, r, "/user/login", http.StatusSeeOther)
+}
+
+func (app *app) signupUserForm(w http.ResponseWriter, r *http.Request) {
+	app.render(w, r, "signup.page.tmpl", &templateData{
+		Form: forms.New(nil),
+	})
+}
+
+func (app *app) logoutUser(w http.ResponseWriter, r *http.Request) {
+	app.session.Remove(r, "userID")
+	app.session.Put(r, "flash", "You have been logged out successfully")
+	http.Redirect(w, r, "/", 303)
+}
+
+func ping(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("OK"))
 }

@@ -2,19 +2,21 @@ package main
 
 import (
 	"html/template"
-	"net/url"
 	"path/filepath"
 	"time"
 
+	"github.com/vandit1604/snipshot/pkg/forms"
 	"github.com/vandit1604/snipshot/pkg/models"
 )
 
 type templateData struct {
-	Snippet     *models.Snippet
-	Snippets    []*models.Snippet
-	CurrentYear int
-	FormErrors  map[string]string
-	FormData    url.Values
+	Snippet           *models.Snippet
+	Snippets          []*models.Snippet
+	CurrentYear       int
+	Form              *forms.Form
+	Flash             string
+	AuthenticatedUser *models.User
+	CSRFToken         string
 }
 
 func NewTemplateCache(dir string) (map[string]*template.Template, error) {
@@ -55,7 +57,11 @@ func NewTemplateCache(dir string) (map[string]*template.Template, error) {
 }
 
 func humanDate(t time.Time) string {
-	return t.Format("02 Jan 2006 at 15:04")
+	if t.IsZero() {
+		return ""
+	}
+
+	return t.UTC().Format("02 Jan 2006 at 15:04")
 }
 
 var templateFunctions = template.FuncMap{

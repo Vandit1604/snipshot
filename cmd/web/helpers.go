@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"runtime/debug"
 	"time"
+
+	"github.com/justinas/nosurf"
+	"github.com/vandit1604/snipshot/pkg/models"
 )
 
 func (app *app) serverError(w http.ResponseWriter, err error) {
@@ -49,6 +52,20 @@ func (app *app) addDefaultData(td *templateData, r *http.Request) *templateData 
 	if td == nil {
 		td = &templateData{}
 	}
+
+	td.CSRFToken = nosurf.Token(r)
+	td.AuthenticatedUser = app.authenticatedUser(r)
 	td.CurrentYear = time.Now().Year()
+	// Add the flash message to the template data, if one exists.
+	td.Flash = app.session.PopString(r, "flash")
 	return td
+}
+
+// checks if the user request has authenticated by checking for the presence of userID, returns 0 if user is not authenticated
+func (app *app) authenticatedUser(r *http.Request) *models.User {
+	user, ok := r.Context().Value(contextKeyUser).(*models.User)
+	if !ok {
+		return nil
+	}
+	return user
 }
