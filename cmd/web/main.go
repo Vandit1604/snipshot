@@ -25,7 +25,8 @@ type app struct {
 	infoLog       *log.Logger
 	session       *sessions.Session
 	templateCache map[string]*template.Template
-	snippets      interface {
+	// during testing this will complain when creating a mock for the mock app instance. That's why we created this as a interface which contains both the functions which are defined in mock package.
+	snippets interface {
 		Insert(string, string, string) (int, error)
 		Get(int) (*models.Snippet, error)
 		Latest() ([]*models.Snippet, error)
